@@ -25,12 +25,12 @@
     <div class="welcome" id="welcome"><h1>Vamos construir algo.</h1><p>Converse com o RARNESS, organize ideias e peça ajuda com código.</p></div>
   </section>
   <form class="composer" id="form">
-    <div class="tokenrow"><input id="token" type="password" autocomplete="off" placeholder="Token de acesso da Vercel" aria-label="Token de acesso" required></div>
+    <div class="tokenrow"><input id="token" type="password" autocomplete="off" placeholder="Código de acesso do RARNESS" aria-label="Código de acesso do RARNESS" required></div>
     <div class="inputrow"><textarea id="prompt" placeholder="Pergunte alguma coisa..." aria-label="Mensagem" rows="1" required></textarea><button class="send" id="send" type="submit">Enviar ↗</button></div>
-    <div class="hint">O token é enviado apenas para a API deste app e não fica salvo. Esta versão web conversa com o modelo; ela não executa comandos nem edita arquivos do seu computador.</div>
+    <div class="hint">Use o código de acesso configurado pelo responsável do RARNESS — não é seu token pessoal da Vercel nem a chave do Gemini. Ele não fica salvo. Esta versão conversa com a IA, mas ainda não executa comandos nem edita arquivos do computador.</div>
   </form>
 </main>
-<footer>RARNESS · A chave do provedor deve ficar nas variáveis de ambiente da Vercel.</footer>
+<footer>RARNESS · A autenticação e a chave do provedor são configuradas no servidor.</footer>
 <script>
 (() => {
   const form = document.querySelector('#form'), prompt = document.querySelector('#prompt');
