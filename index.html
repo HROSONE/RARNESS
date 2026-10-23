@@ -13,7 +13,7 @@
     .status{color:var(--muted);font-size:12px}.layout{width:min(900px,100%);margin:0 auto;flex:1;display:flex;flex-direction:column;padding:24px 18px 18px}
     #messages{flex:1;display:flex;flex-direction:column;gap:18px;padding-bottom:22px}.welcome{margin:auto;text-align:center;max-width:520px;padding:36px 0}.welcome h1{font-size:clamp(28px,5vw,42px);letter-spacing:-.04em;margin:0 0 10px}.welcome p{color:var(--muted);margin:0}
     .bubble{max-width:88%;padding:14px 16px;border:1px solid var(--line);border-radius:16px;white-space:pre-wrap;overflow-wrap:anywhere}.user{align-self:flex-end;background:#25272f}.assistant{align-self:flex-start;background:var(--panel)}.label{font-size:11px;color:var(--muted);margin-bottom:5px;letter-spacing:.06em;text-transform:uppercase}
-    .composer{border:1px solid #3a3d47;background:var(--panel);border-radius:18px;padding:10px;box-shadow:0 8px 30px #0003}.tokenrow{display:flex;gap:8px;margin-bottom:8px}.tokenrow input{width:100%;background:#111216;border:1px solid var(--line);border-radius:9px;color:var(--text);padding:9px 11px;font-size:13px}
+    .composer{border:1px solid #3a3d47;background:var(--panel);border-radius:18px;padding:10px;box-shadow:0 8px 30px #0003}.tokenrow{display:flex;gap:8px;margin-bottom:8px}.tokenrow input{width:100%;background:#111216;border:1px solid var(--line);border-radius:9px;color:var(--text);padding:9px 11px;font-size:13px}.modelrow{display:flex;align-items:center;gap:8px;margin:0 0 8px;color:var(--muted);font-size:12px}.modelrow select{background:#111216;border:1px solid var(--line);border-radius:9px;color:var(--text);padding:8px;max-width:100%}
     .inputrow{display:flex;align-items:flex-end;gap:10px}.inputrow textarea{flex:1;resize:vertical;min-height:48px;max-height:180px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:10px;min-width:0}.send{background:var(--accent);color:#161a10;border:0;border-radius:12px;padding:12px 16px;font-weight:750;cursor:pointer}.send:disabled{opacity:.5;cursor:wait}.hint{font-size:12px;color:var(--muted);padding:9px 4px 0}.error{color:var(--danger)}footer{text-align:center;color:var(--muted);font-size:12px;padding:14px}
     @media(max-width:520px){header{height:58px}.layout{padding:16px 12px 12px}.bubble{max-width:96%}.send{padding:12px}}
   </style>
@@ -26,6 +26,7 @@
   </section>
   <form class="composer" id="form">
     <div class="tokenrow"><input id="token" type="password" autocomplete="off" placeholder="Código de acesso do RARNESS" aria-label="Código de acesso do RARNESS" required></div>
+    <label class="modelrow" for="model">Modelo Gemini <select id="model" aria-label="Modelo Gemini"><option value="gemini-3.8-flash">Gemini 3.8 Flash — rápido</option><option value="gemini-4-argon">Gemini 4 Argon — raciocínio avançado</option></select></label>
     <div class="inputrow"><textarea id="prompt" placeholder="Pergunte alguma coisa..." aria-label="Mensagem" rows="1" required></textarea><button class="send" id="send" type="submit">Enviar ↗</button></div>
     <div class="hint">Use o código de acesso configurado pelo responsável do RARNESS — não é seu token pessoal da Vercel nem a chave do Gemini. Ele não fica salvo. Esta versão conversa com a IA, mas ainda não executa comandos nem edita arquivos do computador.</div>
   </form>
@@ -34,7 +35,7 @@
 <script>
 (() => {
   const form = document.querySelector('#form'), prompt = document.querySelector('#prompt');
-  const token = document.querySelector('#token'), messages = document.querySelector('#messages');
+  const token = document.querySelector('#token'), model = document.querySelector('#model'), messages = document.querySelector('#messages');
   const send = document.querySelector('#send'), status = document.querySelector('#status');
   const history = [];
   function bubble(role, content) {
@@ -50,7 +51,7 @@
     history.push({role:'user',content}); bubble('user',content); prompt.value=''; send.disabled=true; status.textContent='Pensando…';
     const output = bubble('assistant','Conectando ao modelo…');
     try {
-      const response = await fetch('/api/chat', {method:'POST',headers:{'Content-Type':'application/json','X-Rarness-Token':access},body:JSON.stringify({messages:history})});
+      const response = await fetch('/api/chat', {method:'POST',headers:{'Content-Type':'application/json','X-Rarness-Token':access},body:JSON.stringify({messages:history,model:model.value})});
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Falha na solicitação.');
       output.textContent=data.answer || '(Sem resposta de texto)'; history.push({role:'assistant',content:output.textContent}); status.textContent='Conectado · '+data.model;
