@@ -76,8 +76,12 @@ def run_command(
     timeout_s: float = 120,
     max_output_chars: int = 20000,
     memory_mb: int | None = None,
+    env: dict[str, str] | None = None,
 ) -> CommandResult:
     """Executa um comando de shell em cwd, com tempo e saída limitados.
+
+    Se ``env`` for informado, o comando roda só com essas variáveis; se for
+    None, herda o ambiente do processo pai.
 
     Nunca levanta exceção por causa do código de saída do comando. Levanta
     ValueError apenas para parâmetros inválidos (cwd que não é diretório,
@@ -118,6 +122,7 @@ def run_command(
             cwd=str(diretorio),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=env,
             **opcoes,
         )
     except (OSError, ValueError, subprocess.SubprocessError) as erro:

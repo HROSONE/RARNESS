@@ -1,9 +1,21 @@
 import json
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import opencode
+from rarness.executor import run_command
+
+
+def cliente_falso(finish_reason, conteudo="{}"):
+    escolha = SimpleNamespace(finish_reason=finish_reason, message=SimpleNamespace(content=conteudo))
+    completion = SimpleNamespace(choices=[escolha])
+    criar = mock.Mock(return_value=completion)
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=criar)))
 
 
 PLANO = {
@@ -13,6 +25,31 @@ PLANO = {
     "tasks": [{"id": "t1", "title": "Base", "files": ["app.py"], "depends_on": [], "acceptance": []}],
     "questions": [],
 }
+
+
+class ModelOutputTests(unittest.TestCase):
+    def test_truncated_answer_is_rejected(self):
+        ask = opencode.model_ask(cliente_falso("length", "{\"arquivos\": {\"a.py\": \"cort"), "gemini-3.8-flash")
+        with self.assertRaises(ValueError):
+            ask("prompt")
+
+    def test_complete_answer_is_returned(self):
+        ask = opencode.model_ask(cliente_falso("stop", "ok"), "gemini-3.8-flash")
+        self.assertEqual(ask("prompt"), "ok")
+
+    def test_secret_variables_are_removed_from_test_environment(self):
+        ambiente = {"GEMINI_API_KEY": "x", "GITHUB_TOKEN": "y", "DB_PASSWORD": "z", "PATH": "/bin"}
+        with mock.patch.dict(os.environ, ambiente, clear=True):
+            limpo = opencode.ambiente_sem_segredos()
+        self.assertEqual(limpo, {"PATH": "/bin"})
+
+    def test_run_command_uses_given_environment_only(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        comando = f'"{sys.executable}" -c "import os; print(os.environ.get(\'SEGREDO_X\', \'ausente\'))"'
+        with mock.patch.dict(os.environ, {"SEGREDO_X": "presente"}):
+            resultado = run_command(comando, Path(temp.name), env={"PATH": os.environ.get("PATH", "")})
+        self.assertIn("ausente", resultado.stdout)
 
 
 class ProjectCommandTests(unittest.TestCase):

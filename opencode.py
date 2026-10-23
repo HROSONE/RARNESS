@@ -94,14 +94,29 @@ def trim_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def model_ask(client: OpenAI, model: str):
-    """Devolve uma função que envia um prompt ao modelo, sem ferramentas, e devolve o texto."""
+    """Devolve uma função que envia um prompt ao modelo, sem ferramentas, e devolve o texto.
+
+    Levanta ValueError se a resposta foi cortada no limite de tokens, para que
+    um arquivo incompleto nunca seja gravado.
+    """
     def ask(prompt: str) -> str:
         response = client.chat.completions.create(
             model=model, messages=[{"role": "user", "content": prompt}],
             temperature=0.2, max_tokens=MAX_PROJECT_OUTPUT_TOKENS,
         )
-        return response.choices[0].message.content or ""
+        escolha = response.choices[0]
+        if escolha.finish_reason == "length":
+            raise ValueError("a resposta do modelo foi cortada no limite de tokens")
+        return escolha.message.content or ""
     return ask
+
+
+def ambiente_sem_segredos() -> dict[str, str]:
+    """Cópia do ambiente sem variáveis que parecem chaves, tokens ou senhas."""
+    return {
+        nome: valor for nome, valor in os.environ.items()
+        if not any(pista in nome.upper() for pista in SECRET_NAME_HINTS)
+    }
 
 
 def confirma_arquivos(arquivos: dict[str, str]) -> bool:
@@ -112,7 +127,7 @@ def confirma_arquivos(arquivos: dict[str, str]) -> bool:
 
 def executa_testes(comando: str, root: Path):
     """Roda o comando de teste, redige segredos da saída e mostra um resumo."""
-    resultado = run_command(comando, root)
+    resultado = run_command(comando, root, env=ambiente_sem_segredos())
     resultado.stdout = redact(resultado.stdout, root)
     resultado.stderr = redact(resultado.stderr, root)
     console.print(f"[dim]↳ testes: {format_result(resultado, max_chars=180).replace(chr(10), ' ')}[/dim]")
