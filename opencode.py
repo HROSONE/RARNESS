@@ -39,7 +39,7 @@ def provider_config() -> tuple[str, str, str]:
         return (
             provider,
             os.getenv("GEMINI_API_KEY", "").strip(),
-            os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip(),
+            os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
         )
     if provider == "openrouter":
         return (
