@@ -74,4 +74,5 @@ Os testes cobrem a proteção contra caminhos fora da pasta do projeto e o bloqu
 - Comandos de shell aprovados podem modificar o sistema e executar programas. Leia o comando antes de confirmar.
 - Não use o agente em projetos não confiáveis sem revisar as alterações.
 - O filtro de caminhos impede acesso por meio das ferramentas de arquivo fora da raiz do projeto, mas não é um sandbox para comandos de shell.
+- Comandos `bash` que citam arquivos `.env` são recusados, e valores de segredos conhecidos são removidos das saídas. Essa proteção é por padrão de texto: não impede todas as formas de leitura de segredos.
 - As respostas e chamadas de ferramenta dependem de compatibilidade do provedor com a API OpenAI e com chamadas de ferramentas.
