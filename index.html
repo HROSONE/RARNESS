@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101114">
+  <title>RARNESS — Assistente</title>
+  <style>
+    :root{color-scheme:dark;--bg:#101114;--panel:#191a20;--line:#2c2e37;--text:#f2f2f5;--muted:#a1a4b1;--accent:#b9f27c;--danger:#ff9b9b}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:flex;flex-direction:column}
+    header{height:66px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 max(18px,calc((100vw - 900px)/2));gap:12px}
+    .brand{display:flex;align-items:center;gap:10px;font-weight:750;letter-spacing:.08em}.mark{width:30px;height:30px;border-radius:9px;background:var(--accent);color:#151711;display:grid;place-items:center;font-weight:900}
+    .status{color:var(--muted);font-size:12px}.layout{width:min(900px,100%);margin:0 auto;flex:1;display:flex;flex-direction:column;padding:24px 18px 18px}
+    #messages{flex:1;display:flex;flex-direction:column;gap:18px;padding-bottom:22px}.welcome{margin:auto;text-align:center;max-width:520px;padding:36px 0}.welcome h1{font-size:clamp(28px,5vw,42px);letter-spacing:-.04em;margin:0 0 10px}.welcome p{color:var(--muted);margin:0}
+    .bubble{max-width:88%;padding:14px 16px;border:1px solid var(--line);border-radius:16px;white-space:pre-wrap;overflow-wrap:anywhere}.user{align-self:flex-end;background:#25272f}.assistant{align-self:flex-start;background:var(--panel)}.label{font-size:11px;color:var(--muted);margin-bottom:5px;letter-spacing:.06em;text-transform:uppercase}
+    .composer{border:1px solid #3a3d47;background:var(--panel);border-radius:18px;padding:10px;box-shadow:0 8px 30px #0003}.tokenrow{display:flex;gap:8px;margin-bottom:8px}.tokenrow input{width:100%;background:#111216;border:1px solid var(--line);border-radius:9px;color:var(--text);padding:9px 11px;font-size:13px}
+    .inputrow{display:flex;align-items:flex-end;gap:10px}.inputrow textarea{flex:1;resize:vertical;min-height:48px;max-height:180px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:10px;min-width:0}.send{background:var(--accent);color:#161a10;border:0;border-radius:12px;padding:12px 16px;font-weight:750;cursor:pointer}.send:disabled{opacity:.5;cursor:wait}.hint{font-size:12px;color:var(--muted);padding:9px 4px 0}.error{color:var(--danger)}footer{text-align:center;color:var(--muted);font-size:12px;padding:14px}
+    @media(max-width:520px){header{height:58px}.layout{padding:16px 12px 12px}.bubble{max-width:96%}.send{padding:12px}}
+  </style>
+</head>
+<body>
+<header><div class="brand"><span class="mark">R</span> RARNESS</div><div class="status" id="status">Assistente web</div></header>
+<main class="layout">
+  <section id="messages" aria-live="polite">
+    <div class="welcome" id="welcome"><h1>Vamos construir algo.</h1><p>Converse com o RARNESS, organize ideias e peça ajuda com código.</p></div>
+  </section>
+  <form class="composer" id="form">
+    <div class="tokenrow"><input id="token" type="password" autocomplete="off" placeholder="Token de acesso da Vercel" aria-label="Token de acesso" required></div>
+    <div class="inputrow"><textarea id="prompt" placeholder="Pergunte alguma coisa..." aria-label="Mensagem" rows="1" required></textarea><button class="send" id="send" type="submit">Enviar ↗</button></div>
+    <div class="hint">O token é enviado apenas para a API deste app e não fica salvo. Esta versão web conversa com o modelo; ela não executa comandos nem edita arquivos do seu computador.</div>
+  </form>
+</main>
+<footer>RARNESS · A chave do provedor deve ficar nas variáveis de ambiente da Vercel.</footer>
+<script>
+(() => {
+  const form = document.querySelector('#form'), prompt = document.querySelector('#prompt');
+  const token = document.querySelector('#token'), messages = document.querySelector('#messages');
+  const send = document.querySelector('#send'), status = document.querySelector('#status');
+  const history = [];
+  function bubble(role, content) {
+    document.querySelector('#welcome')?.remove();
+    const node = document.createElement('article'); node.className = 'bubble ' + role;
+    const label = document.createElement('div'); label.className = 'label'; label.textContent = role === 'user' ? 'Você' : 'RARNESS';
+    const body = document.createElement('div'); body.textContent = content;
+    node.append(label, body); messages.append(node); node.scrollIntoView({behavior:'smooth',block:'end'}); return body;
+  }
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault(); const content = prompt.value.trim(), access = token.value.trim();
+    if (!content || !access || send.disabled) return;
+    history.push({role:'user',content}); bubble('user',content); prompt.value=''; send.disabled=true; status.textContent='Pensando…';
+    const output = bubble('assistant','Conectando ao modelo…');
+    try {
+      const response = await fetch('/api/chat', {method:'POST',headers:{'Content-Type':'application/json','X-Rarness-Token':access},body:JSON.stringify({messages:history})});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Falha na solicitação.');
+      output.textContent=data.answer || '(Sem resposta de texto)'; history.push({role:'assistant',content:output.textContent}); status.textContent='Conectado · '+data.model;
+    } catch (error) { output.textContent='Erro: '+error.message; output.classList.add('error'); history.pop(); status.textContent='Falha de conexão'; }
+    finally {send.disabled=false;prompt.focus();}
+  });
+  prompt.addEventListener('keydown', event => {if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();form.requestSubmit();}});
+})();
+</script>
+</body>
+</html>
