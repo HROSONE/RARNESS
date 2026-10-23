@@ -18,6 +18,10 @@ from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
+from rarness.executor import format_result, run_command
+from rarness.orchestrator import build_project, create_project, package_project
+from rarness.planner import PROJECT_TYPES, plan_from_dict
+from rarness.state import load_state
 from rarness_security import SENSITIVE_NAMES, resolve_project_path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -27,6 +31,7 @@ console = Console()
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
 MAX_READ_BYTES = 1_000_000
 MAX_OUTPUT_TOKENS = 4096
+MAX_PROJECT_OUTPUT_TOKENS = 8192
 MAX_HISTORY_MESSAGES = 60
 SECRET_NAME_HINTS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
 # Casa .env, .env.local, .env.production e .env.development, mas não .env.example.
@@ -86,6 +91,85 @@ def trim_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             break
         rest = rest[next_turn:]
     return [system, *rest]
+
+
+def model_ask(client: OpenAI, model: str):
+    """Devolve uma função que envia um prompt ao modelo, sem ferramentas, e devolve o texto."""
+    def ask(prompt: str) -> str:
+        response = client.chat.completions.create(
+            model=model, messages=[{"role": "user", "content": prompt}],
+            temperature=0.2, max_tokens=MAX_PROJECT_OUTPUT_TOKENS,
+        )
+        return response.choices[0].message.content or ""
+    return ask
+
+
+def confirma_arquivos(arquivos: dict[str, str]) -> bool:
+    linhas = [f"{caminho} ({len(conteudo)} caracteres)" for caminho, conteudo in arquivos.items()]
+    console.print(Panel("\n".join(linhas), title="Arquivos propostos", border_style="yellow"))
+    return Confirm.ask("Gravar estes arquivos?", default=False)
+
+
+def executa_testes(comando: str, root: Path):
+    """Roda o comando de teste, redige segredos da saída e mostra um resumo."""
+    resultado = run_command(comando, root)
+    resultado.stdout = redact(resultado.stdout, root)
+    resultado.stderr = redact(resultado.stderr, root)
+    console.print(f"[dim]↳ testes: {format_result(resultado, max_chars=180).replace(chr(10), ' ')}[/dim]")
+    return resultado
+
+
+def mostra_plano(state) -> None:
+    plano = plan_from_dict(state.plan)
+    linhas = [f"{tarefa.id} [{state.task_status.get(tarefa.id, 'pending')}] {tarefa.title} -> {', '.join(tarefa.files)}"
+              for tarefa in plano.tasks]
+    linhas.extend(f"Pergunta: {pergunta}" for pergunta in plano.questions)
+    console.print(Panel("\n".join(linhas), title=f"Plano: {plano.project_name}", border_style="cyan"))
+
+
+def handle_project_command(texto: str, root: Path, ask) -> bool:
+    """Trata /plano, /construir e /zip. Devolve False se o texto não for um desses comandos."""
+    if texto.startswith("/plano"):
+        partes = texto[len("/plano"):].strip().split(maxsplit=1)
+        if len(partes) < 2:
+            console.print(f"Uso: /plano <tipo> <descrição>. Tipos: {', '.join(PROJECT_TYPES)}")
+            return True
+        tipo, descricao = partes
+        try:
+            state = create_project(root, descricao, tipo, ask)
+        except ValueError as exc:
+            console.print(f"[red]Não foi possível criar o plano: {exc}[/red]")
+            return True
+        mostra_plano(state)
+        console.print("Plano salvo em .rarness/state.json. Use /construir para gerar os arquivos.")
+        return True
+
+    if texto.startswith("/construir"):
+        state = load_state(root)
+        if state is None:
+            console.print("Nenhum plano encontrado. Crie um com /plano <tipo> <descrição>.")
+            return True
+        comando = texto[len("/construir"):].strip()
+        run_tests = None
+        if comando:
+            if ENV_FILE_IN_COMMAND.search(comando):
+                console.print("[red]Comando de teste recusado: acesso a arquivos .env não é permitido.[/red]")
+                return True
+            if Confirm.ask(f"Rodar '{comando}' após cada tarefa?", default=False):
+                run_tests = lambda: executa_testes(comando, root)
+        state = build_project(root, state, ask, confirma_arquivos, run_tests=run_tests, progress=console.print)
+        mostra_plano(state)
+        return True
+
+    if texto == "/zip":
+        state = load_state(root)
+        if state is None:
+            console.print("Nenhum plano encontrado. Crie um com /plano antes de exportar.")
+            return True
+        console.print(f"ZIP gerado: {package_project(root, state)}")
+        return True
+
+    return False
 
 
 def tool_specs() -> list[dict[str, Any]]:
@@ -272,6 +356,7 @@ def main() -> int:
                 break
             if user_text == "/help":
                 console.print("/clear limpa o contexto; /model mostra a configuração; /exit encerra.")
+                console.print("/plano <tipo> <descrição> cria o plano; /construir [comando de testes] gera e testa; /zip exporta.")
                 continue
             if user_text == "/model":
                 console.print(f"Provedor: {provider} | Modelo: {model}")
@@ -279,6 +364,8 @@ def main() -> int:
             if user_text == "/clear":
                 messages = [{"role": "system", "content": system_prompt(root)}]
                 console.print("[green]Contexto limpo.[/green]")
+                continue
+            if handle_project_command(user_text, root, model_ask(client, model)):
                 continue
             messages = trim_history(messages)
             messages.append({"role": "user", "content": user_text})
