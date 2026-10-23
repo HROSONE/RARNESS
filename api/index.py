@@ -23,6 +23,7 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[Message] = Field(min_length=1, max_length=20)
+    model: str | None = None
 
 
 def get_client() -> tuple[OpenAI, str]:
@@ -30,7 +31,7 @@ def get_client() -> tuple[OpenAI, str]:
     if provider == "gemini":
         key = os.getenv("GEMINI_API_KEY", "").strip()
         base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
-        model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
+        model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
     elif provider == "openrouter":
         key = os.getenv("OPENROUTER_API_KEY", "").strip()
         base_url = "https://openrouter.ai/api/v1"
@@ -55,6 +56,11 @@ def chat(body: ChatRequest, x_rarness_token: str | None = Header(default=None)):
     if not x_rarness_token or not hmac.compare_digest(x_rarness_token, expected):
         raise HTTPException(status_code=401, detail="Token de acesso inválido.")
     client, model = get_client()
+    if os.getenv("AI_PROVIDER", "gemini").strip().lower() == "gemini" and body.model:
+        allowed_models = {"gemini-3.8-flash", "gemini-4-argon"}
+        if body.model not in allowed_models:
+            raise HTTPException(status_code=400, detail="Modelo Gemini não permitido.")
+        model = body.model
     try:
         response = client.chat.completions.create(
             model=model,
