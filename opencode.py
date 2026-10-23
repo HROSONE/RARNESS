@@ -6,12 +6,13 @@ import argparse
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from openai import OpenAI
 from rich.console import Console
 from rich.markdown import Markdown
@@ -25,6 +26,11 @@ console = Console()
 
 IGNORED_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build"}
 MAX_READ_BYTES = 1_000_000
+MAX_OUTPUT_TOKENS = 4096
+MAX_HISTORY_MESSAGES = 60
+SECRET_NAME_HINTS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+# Casa .env, .env.local, .env.production e .env.development, mas não .env.example.
+ENV_FILE_IN_COMMAND = re.compile(r"\.env(?:\.(?:local|production|development))?(?![\w.-])")
 
 
 def provider_config() -> tuple[str, str, str]:
@@ -33,7 +39,7 @@ def provider_config() -> tuple[str, str, str]:
         return (
             provider,
             os.getenv("GEMINI_API_KEY", "").strip(),
-            os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip(),
+            os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip(),
         )
     if provider == "openrouter":
         return (
@@ -53,6 +59,33 @@ def make_client(provider: str, api_key: str) -> OpenAI:
     return OpenAI(api_key=api_key, base_url=base_url)
 
 
+
+
+def secret_values(root: Path) -> set[str]:
+    """Coleta valores de segredos conhecidos para filtrar saídas; nunca são exibidos."""
+    values = {value for name, value in os.environ.items()
+              if value and any(hint in name.upper() for hint in SECRET_NAME_HINTS)}
+    for env_file in (root / ".env", SCRIPT_DIR / ".env"):
+        if env_file.is_file():
+            values.update(value for value in dotenv_values(env_file).values() if value)
+    return {value for value in values if len(value) >= 8}
+
+
+def redact(text: str, root: Path) -> str:
+    for value in sorted(secret_values(root), key=len, reverse=True):
+        text = text.replace(value, "[SEGREDO REMOVIDO]")
+    return text
+
+
+def trim_history(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Descarta os turnos mais antigos, mantendo o prompt de sistema e os pares de ferramentas."""
+    system, rest = messages[0], messages[1:]
+    while len(rest) > MAX_HISTORY_MESSAGES:
+        next_turn = next((i for i in range(1, len(rest)) if rest[i]["role"] == "user"), None)
+        if next_turn is None:
+            break
+        rest = rest[next_turn:]
+    return [system, *rest]
 
 
 def tool_specs() -> list[dict[str, Any]]:
@@ -84,6 +117,8 @@ def execute_tool(name: str, args: dict[str, Any], root: Path) -> str:
             command = str(args.get("command", "")).strip()
             if not command:
                 return "Erro: comando vazio."
+            if ENV_FILE_IN_COMMAND.search(command):
+                return "Comando recusado: acesso a arquivos .env não é permitido."
             console.print(Panel(command, title="Comando solicitado", border_style="yellow"))
             if not Confirm.ask("Executar este comando? Leia-o antes de confirmar.", default=False):
                 return "Execução cancelada pelo usuário."
@@ -95,6 +130,7 @@ def execute_tool(name: str, args: dict[str, Any], root: Path) -> str:
             if result.stderr:
                 output += "\n[STDERR]\n" + result.stderr
             output += f"\n[exit code: {result.returncode}]"
+            output = redact(output, root)
             return output[:20000] or "(Comando sem saída de texto)"
 
         if name == "list_files":
@@ -244,11 +280,13 @@ def main() -> int:
                 messages = [{"role": "system", "content": system_prompt(root)}]
                 console.print("[green]Contexto limpo.[/green]")
                 continue
+            messages = trim_history(messages)
             messages.append({"role": "user", "content": user_text})
             for _ in range(12):
                 with console.status("[cyan]Pensando...[/cyan]"):
                     response = client.chat.completions.create(
-                        model=model, messages=messages, tools=tools, tool_choice="auto"
+                        model=model, messages=messages, tools=tools, tool_choice="auto",
+                        max_tokens=MAX_OUTPUT_TOKENS,
                     )
                 msg = response.choices[0].message
                 assistant_message: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
