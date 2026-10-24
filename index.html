@@ -35,8 +35,7 @@
     <div class="settings-head"><strong id="settingsTitle">Configurações</strong><button class="iconbtn" id="closeSettings" type="button" aria-label="Fechar configurações">×</button></div>
     <label class="setting-field">Chave da API do Gemini<input id="apiKey" type="password" autocomplete="off" placeholder="Cole sua chave da API" /></label>
     <label class="setting-field">Modelo<select id="model"><option value="gemini-3.8-flash">Gemini 3.8 Flash — rápido</option><option value="gemini-4-argon">Gemini 4 Argon — raciocínio avançado</option></select></label>
-    <label class="setting-field">Tipo de projeto<select id="projectType"><option value="site">Site</option><option value="jogo">Jogo</option><option value="app_android">Aplicativo Android</option><option value="desktop">Programa desktop</option><option value="api">API</option><option value="ferramenta">Ferramenta</option></select></label>
-    <p class="hint">A chave é usada para chamar diretamente a API do Google e não é salva pelo RARNESS. Não compartilhe sua chave. A escolha do tipo de projeto será usada ao gerar um plano.</p>
+    <p class="hint">A chave é usada para chamar diretamente a API do Google. Não compartilhe sua chave. Descreva o que deseja no prompt; o RARNESS deve identificar o tipo de projeto automaticamente.</p>
     <div class="setting-actions"><button class="secondary" id="cancelSettings" type="button">Fechar</button><button class="send" id="saveSettings" type="button">Aplicar</button></div>
   </section>
 </div>
