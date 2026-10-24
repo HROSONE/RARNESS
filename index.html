@@ -45,7 +45,8 @@
   const form = document.querySelector('#form'), prompt = document.querySelector('#prompt');
   const apiKey = document.querySelector('#apiKey'), model = document.querySelector('#model'), messages = document.querySelector('#messages');
   const send = document.querySelector('#send'), status = document.querySelector('#status');
-  const history = [];\n  let openSettings = () => document.querySelector('#settingsPanel').classList.add('open');
+  const history = [];
+  let openSettings = () => document.querySelector('#settingsPanel').classList.add('open');
   function bubble(role, content) {
     document.querySelector('#welcome')?.remove();
     const node = document.createElement('article'); node.className = 'bubble ' + role;
@@ -56,7 +57,8 @@
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const content = prompt.value.trim(), key = apiKey.value.trim(), selectedModel = model.value;
-    if (!content || send.disabled) return;\n    if (!key) { openSettings(); status.textContent='Adicione sua chave nas configurações'; return; }
+    if (!content || send.disabled) return;
+    if (!key) { openSettings(); status.textContent='Adicione sua chave nas configurações'; return; }
     history.push({role:'user',content});
     if (history.length > 40) history.splice(0, history.length - 40);
     while (history[0]?.role === 'assistant') history.shift();
