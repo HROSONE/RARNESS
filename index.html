@@ -78,7 +78,7 @@
     } finally {send.disabled=false;prompt.focus();}
   });
   const settingsPanel = document.querySelector('#settingsPanel');
-  const openSettings = () => settingsPanel.classList.add('open');
+  openSettings = () => settingsPanel.classList.add('open');
   const closeSettings = () => settingsPanel.classList.remove('open');
   document.querySelector('#openSettings').addEventListener('click', openSettings);
   document.querySelector('#closeSettings').addEventListener('click', closeSettings);
