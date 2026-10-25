@@ -1,8 +1,4 @@
-"""Vercel ASGI entrypoint for the RARNESS web chat.
-
-This serverless web interface is a chat frontend; it does not run local shell tools.
-Configure RARNESS_ACCESS_TOKEN and one provider API key in Vercel environment variables.
-"""
+"""Vercel ASGI entrypoint for the RARNESS web chat with automatic Claude Code-style intent & mode inference."""
 from __future__ import annotations
 
 import hmac
@@ -13,6 +9,8 @@ from typing import Literal
 from fastapi import FastAPI, Header, HTTPException
 from openai import OpenAI
 from pydantic import BaseModel, Field
+
+from rarness.intent_router import infer_intent_and_mode
 
 app = FastAPI(title="RARNESS API", docs_url=None, redoc_url=None)
 
@@ -28,6 +26,7 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[Message] = Field(min_length=1, max_length=20)
     model: str | None = None
+    mode: str | None = "auto"
 
 
 def get_client() -> tuple[OpenAI, str]:
@@ -53,7 +52,7 @@ def get_client() -> tuple[OpenAI, str]:
 
 @app.get("/")
 def health():
-    return {"name": "RARNESS", "status": "online", "mode": "web-chat"}
+    return {"name": "RARNESS", "status": "online", "mode": "web-chat-claude-code-engine"}
 
 
 @app.post("/chat")
@@ -76,19 +75,47 @@ def chat(body: ChatRequest, x_rarness_token: str | None = Header(default=None)):
             )
         model = body.model
 
+    last_user_msg = next((m.content for m in reversed(body.messages) if m.role == "user"), "")
+    profile = infer_intent_and_mode(
+        last_user_msg,
+        configured_mode=body.mode or "auto",
+        current_model=model,
+        auto_route_model=(body.model is None),
+    )
+    if os.getenv("AI_PROVIDER", "gemini").strip().lower() == "gemini" and body.model is None:
+        model = profile.recommended_model
+
+    sys_prompt = (
+        "Você é o RARNESS, agente autônomo de engenharia de software (arquitetura estilo Claude Code). "
+        f"Intenção inferida: {profile.intent} | Modo efetivo: {profile.effective_mode} | "
+        f"Nível de raciocínio: {profile.thinking_level} | Tipo de projeto: {profile.inferred_project_type}. "
+        f"{profile.reasoning_directive} "
+        "Regra estrita: nunca use nem sugira modelos antigos como Gemini 1.x, 2.0 ou 2.5; utilize exclusivamente "
+        "gemini-3.8-flash e gemini-4-argon."
+    )
+
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[{"role": item.role, "content": item.content} for item in body.messages],
-            temperature=0.3,
-            max_tokens=1800,
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                *[{"role": item.role, "content": item.content} for item in body.messages],
+            ],
+            temperature=profile.temperature,
+            max_tokens=min(4096, profile.max_output_tokens),
         )
         answer = response.choices[0].message.content or ""
-        return {"answer": answer, "model": model}
+        return {
+            "answer": answer,
+            "model": model,
+            "inferred_intent": profile.intent,
+            "effective_mode": profile.effective_mode,
+            "thinking_level": profile.thinking_level,
+            "project_type": profile.inferred_project_type,
+        }
     except HTTPException:
         raise
     except Exception:
-        # Do not return provider errors that may contain internal request details.
         raise HTTPException(
             status_code=502,
             detail="O provedor de IA falhou. Confira a chave, o modelo e os limites da API.",

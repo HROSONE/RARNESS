@@ -1,84 +1,43 @@
-# RARNESS — OpenCode CLI (Claude Code Edition)
+# RARNESS — OpenCode CLI (Claude Code Surpassed Edition)
 
-Um agente autônomo de engenharia de software via terminal em Python, projetado com as capacidades centrais do **Claude Code**: leitura numerada por janelas de linha, edições cirúrgicas com verificação de unicidade e *unified diff*, `multi_edit` atômico, busca avançada por regex/glob com contexto (`search_text`), mapa estrutural AST do repositório (`repo_map`), gerenciamento de subtarefas (`todo_write`/`todo_read`), subagentes isolados de exploração (`subagent`), menções `@arquivo`, compactação inteligente de contexto (`/compact`), modos de permissão (`ask`, `auto-edit`, `plan`), rollback instantâneo (`/undo`) e fluxo de revisão/commit Git (`/review`, `/commit`).
+Agente autônomo de engenharia de software via terminal e Web, construído a partir da engenharia reversa da arquitetura do **Claude Code** e expandido com **Inferência Automática de Modo e Intenção**, **Orçamento Dinâmico de Raciocínio (`standard` / `deep` / `ultrathink`)**, **Guarda Estrita `Read-Before-Edit` + `Stale File Guard` (SHA-256)**, **Edição Cirúrgica com Alinhamento Fuzzy de Indentação**, **Verificação Sintática AST Automática Pós-Edição**, **Execução Paralela de Ferramentas Read-Only** e **Injeção Automática de Contexto de Stacktraces**.
 
-## Requisitos
+## Modelos Gemini Permitidos (Regra Estrita)
 
-- Python 3.10 ou superior (funciona mesmo sem pacotes externos instalados via *fallbacks* nativos em `stdlib`, ou com `openai` e `rich` para interface enriquecida)
-- Uma chave de API válida do **Google AI Studio (Gemini)**, **Anthropic (Claude)**, **OpenAI** ou **OpenRouter**
+- `gemini-3.8-flash` (**Gemini 3.8 Flash — rápido**, padrão)
+- `gemini-4-argon` (**Gemini 4 Argon — raciocínio avançado**, acionado automaticamente em tarefas `ultrathink` / arquitetura complexa)
+- *Modelos antigos (`gemini-1.x`, `gemini-2.0`, `gemini-2.5`) são estritamente bloqueados no CLI, na API e na interface Web.*
 
-## Instalação
+## Arquitetura do Motor (`rarness/`)
 
-### Windows (PowerShell)
+| Módulo | Subsistema |
+|---|---|
+| `rarness/intent_router.py` | **Motor de Inferência de Modo & Thinking Budget**: classifica cada prompt (`explanation`, `planning`, `review`, `debug`, `implementation`, `greenfield`), trava automaticamente em modo somente-leitura (`plan`) quando o usuário faz perguntas ou pede revisões, detecta gatilhos `megathink`/`ultrathink`, infere `project_type` e extrai linhas de stacktraces automaticamente. |
+| `rarness/code_intel.py` | **Inteligência de Código & AST**: leitura numerada por janelas (`format_numbered_lines`), `apply_surgical_edit` com fallback de indentação *fuzzy*, `apply_multi_edit` transacional, `patch_lines` por intervalo de linhas, `find_symbol` (`[DEFINIÇÕES]` + `[REFERÊNCIAS]`), `build_repo_map` AST e `verify_syntax` (validação imediata de AST Python, JSON e delimitadores léxicos). |
+| `rarness/session.py` | **Guarda de Sessão, Hooks & Persistência**: impõe `Read-Before-Edit` e `Stale File Guard` (hash SHA-256), classifica comandos seguros (`is_safe_readonly_bash`), executa hooks `PreToolUse`/`PostToolUse` (`.rarness/hooks.json`), salva/retoma sessões (`.rarness/sessions/`) e provê `safe_web_fetch` com proteção anti-SSRF. |
+| `rarness/memory.py` | **Memória Hierárquica & Compactação**: carrega `CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md` e `.rarness/memory.md`, gera `CLAUDE.md` via `/init`, expande `@arquivo[:l1-l2]`, compacta histórico (`/compact`) e gerencia `todo_write`/`todo_read`. |
+| `rarness/git_ops.py` | **Git & Rollback**: `git_status_summary`, `git_diff_summary` e `restore_latest_backup` (`/undo`). |
+| `rarness/planner.py`, `orchestrator.py`, `repair.py`, `executor.py`, `project_fs.py`, `state.py` | **Orquestração Determinística**: planejamento validado em DAG topológico, execução com limite de grupo de processos/memória e loop de reparo automático com detecção de regressão. |
 
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-notepad .env
-python opencode.py
-```
+## 15 Ferramentas Canônicas (Nomes RARNESS + Aliases Claude Code)
 
-### Linux / macOS
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-cp .env.example .env
-${EDITOR:-nano} .env
-python opencode.py
-```
-
-Preencha a chave correspondente no `.env` (`AI_PROVIDER=gemini`, `anthropic`, `openai` ou `openrouter`). **Nunca publique o `.env`**; ele está listado no `.gitignore` e bloqueado pelas guardas de segurança.
-
-## Uso Interativo e Modo One-Shot (`-p`)
-
-```bash
-# Modo interativo na pasta atual ou em outra pasta
-python opencode.py /caminho/do/projeto
-
-# Modo inicial de permissão (ask | auto-edit | plan)
-python opencode.py --mode plan
-
-# Modo não-interativo (estilo `claude -p`)
-python opencode.py -p "Explique a arquitetura deste repositório" --mode plan
-```
-
-## Ferramentas do Agente (Paridade com Claude Code)
-
-- `list_files`: lista arquivos do projeto via glob ignorando dependências e `.env`.
-- `read_file`: lê arquivos inteiros ou intervalos (`start_line`, `end_line`, `line_numbers=true`).
-- `edit_file`: substitui trecho exato garantindo unicidade (ou `replace_all=true`), exibe *unified diff* e cria backup em `.rarness/backups`.
-- `multi_edit`: aplica múltiplas edições cirúrgicas atômicas em um arquivo.
-- `write_file`: cria ou sobrescreve arquivos com backup automático e preview de diff.
-- `search_text`: busca textual ou por expressão regular (`regex=true`), com filtro `file_pattern` e linhas de contexto (`context_lines`).
-- `repo_map`: extrai classes, métodos e funções do projeto via AST (Python) e padrões de linguagem (JS/TS/Go/Rust/Kotlin).
-- `todo_read` / `todo_write`: cria e atualiza a checklist de tarefas do agente em `.rarness/todos.json`.
-- `subagent`: despacha um subagente explorador somente-leitura com histórico isolado para investigar o código sem inflar o contexto principal.
-- `bash`: executa comandos via `rarness.executor.run_command` com limite de tempo, encerramento de árvore de processos, bloqueio de `.env`/comandos destrutivos e redaction de segredos.
-
-## Comandos da Interface e Atalhos
-
-- `@caminho/arquivo.py` ou `@caminho/arquivo.py:10-40` — anexa automaticamente o conteúdo numerado do arquivo à sua mensagem
-- `# <instrução>` — salva rapidamente uma regra persistente no `CLAUDE.md`
-- `/mode [ask|auto-edit|plan]` — alterna entre pedir confirmação (`ask`), aprovar edições de código com backup automático (`auto-edit`) ou apenas planejar/ler (`plan`)
-- `/init` — analisa o repositório e gera/atualiza o arquivo `CLAUDE.md`
-- `/memory [nota]` — exibe as memórias ativas (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`) ou adiciona uma nota
-- `/compact [foco]` — compacta o histórico da conversa mantendo decisões, ferramentas usadas e os turnos mais recentes
-- `/status` e `/diff [--staged]` — exibe `git status` e `git diff` do projeto
-- `/review` — realiza um code review detalhado do `git diff` atual
-- `/commit` — sugere mensagem de commit semântica a partir do diff e executa o commit após confirmação
-- `/undo` — desfaz a última alteração de arquivo restaurando o snapshot mais recente de `.rarness/backups`
-- `/todo` — mostra a checklist de tarefas atual do agente
-- `/cost` / `/context` — mostra estimativa de tokens e estatísticas do histórico
-- `/doctor` — executa diagnóstico do ambiente, chaves, Git e segurança
-- `/plano <tipo> <descrição>`, `/construir [cmd_teste]`, `/zip` — fluxo estruturado de projetos com ciclo automático de testes e reparo
-- `/model [nome]`, `/clear`, `/help`, `/exit`
+1. `list_files` (`Glob`) — busca glob rápida ignorando dependências e segredos
+2. `read_file` (`Read`) — leitura numerada por janela de linhas com registro SHA-256 na sessão
+3. `write_file` (`Write`) — escrita com guarda `Read-Before-Edit`, backup automático e validação AST
+4. `edit_file` (`Edit`) — edição cirúrgica com alinhamento fuzzy de indentação, unified diff e validação AST
+5. `multi_edit` (`MultiEdit`) — múltiplas edições cirúrgicas atômicas no mesmo arquivo
+6. `patch_lines` (`PatchLines`) — substituição cirúrgica por intervalo de linhas (`start_line..end_line`)
+7. `search_text` (`Grep`) — busca regex/literal com filtro `file_pattern` e linhas de contexto
+8. `find_symbol` (`FindSymbol`) — localiza definições e referências de classes/funções em todo o projeto
+9. `repo_map` (`RepoMap`) — mapa estrutural AST do repositório
+10. `verify_syntax` (`VerifySyntax`) — validação sintática sob demanda (AST Python, JSON e delimitadores)
+11. `todo_read` (`TodoRead`) e `todo_write` (`TodoWrite`) — checklist dinâmica persistida em `.rarness/todos.json`
+12. `subagent` (`Task`) — subagentes isolados com papéis (`explorer`, `planner`, `reviewer`)
+13. `web_fetch` (`WebFetch`) — leitura segura de documentação técnica HTTP/HTTPS com bloqueio SSRF
+14. `bash` (`Bash`) — execução controlada via `run_command` com aprovação automática de testes em `auto-edit`
 
 ## Testes
 
 ```bash
-python -m unittest discover -s tests -v
+python3 -m unittest discover -s tests -v
 ```

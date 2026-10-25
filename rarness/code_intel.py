@@ -1,9 +1,10 @@
-"""Inteligência de código, leitura numerada, diff unificado, edição cirúrgica e mapa do repositório."""
+"""Inteligência de código, leitura numerada, diff unificado, edição cirúrgica/fuzzy, verificação AST e mapa do repositório."""
 from __future__ import annotations
 
 import ast
 import difflib
 import fnmatch
+import json
 import os
 import re
 from pathlib import Path
@@ -21,6 +22,8 @@ _SYMBOL_PATTERNS = [
     re.compile(r"^\s*func\s+(?:\([^)]+\)\s*)?([A-Za-z_]\w*)", re.MULTILINE),
     re.compile(r"^\s*(?:public|private|protected|internal)?\s*(?:suspend\s+)?fun\s+([A-Za-z_]\w*)", re.MULTILINE),
 ]
+
+_BRACE_CHECK_EXTENSIONS = {".js", ".ts", ".jsx", ".tsx", ".kt", ".kts", ".java", ".go", ".rs", ".c", ".cpp", ".css"}
 
 
 def format_numbered_lines(
@@ -72,13 +75,66 @@ def unified_diff_preview(
     return joined
 
 
+def _fuzzy_indentation_replace(content: str, old_text: str, new_text: str) -> str | None:
+    """Tenta localizar um bloco ignorando diferenças de indentação base, preservando o recuo original.
+
+    Só aplica se houver exatamente 1 correspondência inequívoca no arquivo.
+    """
+    old_lines = old_text.splitlines()
+    if not old_lines or not any(line.strip() for line in old_lines):
+        return None
+
+    content_lines = content.splitlines(keepends=True)
+    n = len(old_lines)
+    if n > len(content_lines):
+        return None
+
+    old_stripped = [line.strip() for line in old_lines]
+    matches: list[int] = []
+    for i in range(len(content_lines) - n + 1):
+        window_stripped = [content_lines[i + j].strip() for j in range(n)]
+        if window_stripped == old_stripped:
+            matches.append(i)
+
+    if len(matches) != 1:
+        return None
+
+    start_idx = matches[0]
+    # Calcula a diferença de indentação na primeira linha não vazia
+    first_non_empty_idx = next(j for j, line in enumerate(old_lines) if line.strip())
+    actual_line = content_lines[start_idx + first_non_empty_idx]
+    actual_indent = len(actual_line) - len(actual_line.lstrip(" "))
+    old_indent = len(old_lines[first_non_empty_idx]) - len(old_lines[first_non_empty_idx].lstrip(" "))
+    delta_indent = actual_indent - old_indent
+
+    eol = "\r\n" if content_lines[start_idx].endswith("\r\n") else "\n"
+    new_lines_raw = new_text.splitlines()
+    adjusted_new_lines: list[str] = []
+    for line in new_lines_raw:
+        if not line.strip():
+            adjusted_new_lines.append("")
+        elif delta_indent > 0:
+            adjusted_new_lines.append((" " * delta_indent) + line)
+        elif delta_indent < 0:
+            remove = min(-delta_indent, len(line) - len(line.lstrip(" ")))
+            adjusted_new_lines.append(line[remove:])
+        else:
+            adjusted_new_lines.append(line)
+
+    replacement_str = eol.join(adjusted_new_lines)
+    if content_lines[start_idx + n - 1].endswith(("\n", "\r\n")):
+        replacement_str += eol
+
+    return "".join(content_lines[:start_idx]) + replacement_str + "".join(content_lines[start_idx + n:])
+
+
 def apply_surgical_edit(
     content: str,
     old_text: str,
     new_text: str,
     replace_all: bool = False,
 ) -> tuple[str, int]:
-    """Substitui old_text por new_text com validação de unicidade estilo Claude Code."""
+    """Substitui old_text por new_text com validação de unicidade e fallback de indentação inteligente."""
     if not old_text:
         raise ValueError("old_text não pode ser vazio.")
     if old_text == new_text:
@@ -94,6 +150,10 @@ def apply_surgical_edit(
 
     ocorrencias = content.count(alvo)
     if ocorrencias == 0:
+        if not replace_all:
+            fuzzy_res = _fuzzy_indentation_replace(content, old_text, new_text)
+            if fuzzy_res is not None:
+                return fuzzy_res, 1
         raise ValueError("trecho exato não encontrado; leia o arquivo antes de tentar novamente.")
     if ocorrencias > 1 and not replace_all:
         raise ValueError(
@@ -124,6 +184,114 @@ def apply_multi_edit(content: str, edits: list[dict[str, Any]]) -> tuple[str, in
         except ValueError as exc:
             raise ValueError(f"falha na edição #{indice}: {exc}") from exc
     return atual, total_substituicoes
+
+
+def patch_lines(content: str, start_line: int, end_line: int, new_text: str) -> str:
+    """Substitui cirurgicamente o intervalo de linhas start_line..end_line (1-indexado, inclusivo)."""
+    lines = content.splitlines(keepends=True)
+    total = len(lines)
+    if start_line < 1 or end_line < start_line or start_line > max(1, total + 1):
+        raise ValueError(f"Intervalo de linhas inválido ({start_line}..{end_line}) para arquivo com {total} linhas.")
+    eol = "\r\n" if (lines and lines[0].endswith("\r\n")) else "\n"
+    new_lines = [line + eol for line in new_text.splitlines()]
+    if new_text == "":
+        new_lines = []
+    prefix = lines[: start_line - 1]
+    suffix = lines[min(total, end_line) :]
+    result = "".join(prefix + new_lines + suffix)
+    if not content.endswith(("\n", "\r\n")) and not suffix and result.endswith(eol):
+        result = result[: -len(eol)]
+    return result
+
+
+def _verify_balanced_delimiters(content: str) -> tuple[bool, str]:
+    """Verifica balanceamento de {}, () e [] ignorando strings e comentários."""
+    stack: list[tuple[str, int]] = []
+    pairs = {"}": "{", ")": "(", "]": "["}
+    i = 0
+    n = len(content)
+    line = 1
+
+    while i < n:
+        ch = content[i]
+        if ch == "\n":
+            line += 1
+            i += 1
+            continue
+        # Comentário de linha //
+        if ch == "/" and i + 1 < n and content[i + 1] == "/":
+            while i < n and content[i] != "\n":
+                i += 1
+            continue
+        # Comentário de bloco /* ... */
+        if ch == "/" and i + 1 < n and content[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (content[i] == "*" and content[i + 1] == "/"):
+                if content[i] == "\n":
+                    line += 1
+                i += 1
+            i += 2
+            continue
+        # Strings
+        if ch in ("'", '"', "`"):
+            quote = ch
+            i += 1
+            while i < n:
+                c = content[i]
+                if c == "\\":
+                    i += 2
+                    continue
+                if c == "\n":
+                    line += 1
+                if c == quote:
+                    i += 1
+                    break
+                i += 1
+            continue
+
+        if ch in ("{", "(", "["):
+            stack.append((ch, line))
+        elif ch in ("}", ")", "]"):
+            expected = pairs[ch]
+            if not stack:
+                return False, f"Delimitador '{ch}' extra fechado na linha {line} sem abertura correspondente."
+            open_ch, open_line = stack.pop()
+            if open_ch != expected:
+                return (
+                    False,
+                    f"Delimitador '{ch}' na linha {line} não corresponde a '{open_ch}' aberto na linha {open_line}.",
+                )
+        i += 1
+
+    if stack:
+        open_ch, open_line = stack[-1]
+        return False, f"Falta fechar '{open_ch}' aberto na linha {open_line}."
+    return True, "Sintaxe OK (delimitadores balanceados)"
+
+
+def verify_syntax(path_or_name: str | Path, content: str) -> tuple[bool, str]:
+    """Valida a sintaxe do arquivo após edição (AST para Python, parser JSON e balanceamento léxico)."""
+    p = Path(path_or_name)
+    suffix = p.suffix.lower()
+
+    if suffix == ".py":
+        try:
+            ast.parse(content, filename=str(p))
+            return True, "Sintaxe Python OK (AST validada)"
+        except SyntaxError as exc:
+            return False, f"Erro de sintaxe Python na linha {exc.lineno}: {exc.msg}"
+
+    if suffix in {".json", ".ipynb"}:
+        try:
+            json.loads(content)
+            return True, "Sintaxe JSON OK"
+        except json.JSONDecodeError as exc:
+            return False, f"Erro de sintaxe JSON na linha {exc.lineno}, coluna {exc.colno}: {exc.msg}"
+
+    if suffix in _BRACE_CHECK_EXTENSIONS:
+        return _verify_balanced_delimiters(content)
+
+    return True, "Sintaxe OK"
 
 
 def search_codebase(
@@ -194,6 +362,57 @@ def search_codebase(
                         return "\n".join(resultados) + f"\n(Limite de {max_results} resultados.)"
 
     return "\n".join(resultados) or "Nenhuma ocorrência encontrada."
+
+
+def find_symbol(root: Path, symbol: str, max_results: int = 40) -> str:
+    """Localiza definições (classes, funções, métodos) e referências de um símbolo no projeto."""
+    nome = symbol.strip()
+    if not nome or not re.match(r"^[A-Za-z_]\w*$", nome):
+        return "Erro: informe um identificador de símbolo válido."
+
+    raiz = root.resolve()
+    def_re = re.compile(
+        rf"^\s*(?:async\s+def|def|class|fun|suspend\s+fun|function|async\s+function|"
+        rf"export\s+(?:async\s+)?function|export\s+class|pub\s+fn|fn|struct|interface|type)\s+{re.escape(nome)}\b"
+    )
+    ref_re = re.compile(rf"\b{re.escape(nome)}\b")
+
+    definicoes: list[str] = []
+    referencias: list[str] = []
+
+    for atual, dirs, filenames in os.walk(raiz):
+        pasta_atual = Path(atual)
+        dirs[:] = sorted(
+            d for d in dirs
+            if d not in IGNORED_DIR_NAMES
+            and d.lower() not in SENSITIVE_NAMES
+            and not (pasta_atual / d).is_symlink()
+        )
+        for filename in sorted(filenames):
+            if filename.lower() in SENSITIVE_NAMES:
+                continue
+            caminho = pasta_atual / filename
+            if caminho.is_symlink() or not caminho.is_file():
+                continue
+            try:
+                if caminho.stat().st_size > MAX_DEFAULT_READ_BYTES:
+                    continue
+                linhas = caminho.read_text(encoding="utf-8", errors="ignore").splitlines()
+            except OSError:
+                continue
+            rel = caminho.relative_to(raiz).as_posix()
+            for idx, linha in enumerate(linhas, 1):
+                if def_re.search(linha):
+                    definicoes.append(f"{rel}:{idx}: {linha.strip()[:180]}")
+                elif ref_re.search(linha) and len(referencias) < max_results:
+                    referencias.append(f"{rel}:{idx}: {linha.strip()[:180]}")
+
+    partes: list[str] = []
+    if definicoes:
+        partes.append("[DEFINIÇÕES]\n" + "\n".join(definicoes[:20]))
+    if referencias:
+        partes.append("[REFERÊNCIAS]\n" + "\n".join(referencias[:max_results]))
+    return "\n\n".join(partes) or f"Símbolo {nome!r} não encontrado no projeto."
 
 
 def _python_symbols(source: str) -> list[str]:

@@ -12,8 +12,8 @@
     .brand{display:flex;align-items:center;gap:10px;font-weight:750;letter-spacing:.08em}.mark{width:30px;height:30px;border-radius:9px;background:var(--accent);color:#151711;display:grid;place-items:center;font-weight:900}
     .status{color:var(--muted);font-size:12px}.layout{width:min(900px,100%);margin:0 auto;flex:1;display:flex;flex-direction:column;padding:24px 18px 18px}
     #messages{flex:1;display:flex;flex-direction:column;gap:18px;padding-bottom:22px}.welcome{margin:auto;text-align:center;max-width:560px;padding:36px 0}.welcome h1{font-size:clamp(28px,5vw,42px);letter-spacing:-.04em;margin:0 0 10px}.welcome p{color:var(--muted);margin:0}
-    .bubble{max-width:88%;padding:14px 16px;border:1px solid var(--line);border-radius:16px;white-space:pre-wrap;overflow-wrap:anywhere}.user{align-self:flex-end;background:#25272f}.assistant{align-self:flex-start;background:var(--panel)}.label{font-size:11px;color:var(--muted);margin-bottom:5px;letter-spacing:.06em;text-transform:uppercase}
-    .composer{border:1px solid #3a3d47;background:var(--panel);border-radius:18px;padding:10px;box-shadow:0 8px 30px #0003}.toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 6px 6px;border-bottom:1px solid var(--line);margin-bottom:6px;font-size:12px;color:var(--muted)}.toolbar select{background:#111216;border:1px solid var(--line);border-radius:8px;color:var(--text);padding:4px 8px;font-size:12px}
+    .bubble{max-width:88%;padding:14px 16px;border:1px solid var(--line);border-radius:16px;white-space:pre-wrap;overflow-wrap:anywhere}.user{align-self:flex-end;background:#25272f}.assistant{align-self:flex-start;background:var(--panel)}.label{font-size:11px;color:var(--muted);margin-bottom:5px;letter-spacing:.06em;text-transform:uppercase;display:flex;justify-content:space-between;gap:10px}.badge{color:var(--accent);font-weight:600}
+    .composer{border:1px solid #3a3d47;background:var(--panel);border-radius:18px;padding:10px;box-shadow:0 8px 30px #0003}.toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:0 6px 6px;border-bottom:1px solid var(--line);margin-bottom:6px;font-size:12px;color:var(--muted)}.toolbar select{background:#111216;border:1px solid var(--line);border-radius:8px;color:var(--text);padding:4px 8px;font-size:12px}
     .inputrow{display:flex;align-items:flex-end;gap:10px}.inputrow textarea{flex:1;resize:vertical;min-height:48px;max-height:180px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:10px;min-width:0}.send{background:var(--accent);color:#161a10;border:0;border-radius:12px;padding:12px 16px;font-weight:750;cursor:pointer}.send:disabled{opacity:.5;cursor:wait}.hint{font-size:12px;color:var(--muted);padding:9px 4px 0}.error{color:var(--danger)}footer{text-align:center;color:var(--muted);font-size:12px;padding:14px}
     @media(max-width:520px){header{height:58px}.layout{padding:16px 12px 12px}.bubble{max-width:96%}.send{padding:12px}}
   </style>
@@ -38,15 +38,17 @@
     <div class="toolbar">
       <label>Modo:
         <select id="agentMode">
-          <option value="code">Engenharia & Código</option>
-          <option value="plan">Arquitetura & Plano (/plan)</option>
-          <option value="review">Code Review (/review)</option>
+          <option value="auto" selected>⚡ Auto (Inferência Estilo Claude Code)</option>
+          <option value="code">🛠 Implementação & Edição Cirúrgica</option>
+          <option value="plan">📐 Arquitetura & Plano (/plan)</option>
+          <option value="debug">🐛 Debug & Reparo de Erros</option>
+          <option value="review">🔍 Code Review & Auditoria (/review)</option>
         </select>
       </label>
-      <span>Enter envia · Shift+Enter quebra linha</span>
+      <span id="inferencePreview">Inferência de modo ativa</span>
     </div>
     <div class="inputrow">
-      <textarea id="prompt" placeholder="Descreva o que você quer criar..." aria-label="Mensagem" rows="1" required></textarea>
+      <textarea id="prompt" placeholder="Descreva o que você quer criar, planejar, revisar ou depurar..." aria-label="Mensagem" rows="1" required></textarea>
       <button class="send" id="send" type="submit">Enviar ↗</button>
     </div>
   </form>
@@ -69,21 +71,75 @@
 <script>
 (() => {
   const ALLOWED_MODELS = new Set(['gemini-3.8-flash', 'gemini-4-argon']);
+  const FORBIDDEN_LEGACY = /^gemini-[12](\.|-|$)/i;
   const form = document.querySelector('#form'), prompt = document.querySelector('#prompt');
   const apiKey = document.querySelector('#apiKey'), model = document.querySelector('#model'), messages = document.querySelector('#messages');
-  const agentMode = document.querySelector('#agentMode'), clearChat = document.querySelector('#clearChat');
+  const agentMode = document.querySelector('#agentMode'), clearChat = document.querySelector('#clearChat'), inferencePreview = document.querySelector('#inferencePreview');
   const send = document.querySelector('#send'), status = document.querySelector('#status');
   const history = [];
-  const MODE_INSTRUCTIONS = {
-    code: 'Você é o RARNESS, agente sênior de engenharia de software estilo Claude Code. Responda em português brasileiro. Regra estrita: nunca use ou sugira modelos antigos como Gemini 1.x, 2.0 ou 2.5; utilize exclusivamente gemini-3.8-flash e gemini-4-argon.',
-    plan: 'Você está no Modo Planejamento (/plan) do RARNESS. Analise os requisitos, proponha a arquitetura de arquivos, dependências e critérios de aceitação antes de escrever código. Nunca use modelos antigos como Gemini 2.0 ou 2.5.',
-    review: 'Você está no Modo Code Review (/review) do RARNESS. Examine o código ou diff enviado procurando bugs, falhas de segurança e melhorias.'
-  };
+
+  // Motor de Inferência Cognitiva no Front-End (espelha rarness/intent_router.py)
+  function inferIntentAndMode(text, configuredMode, selectedModel) {
+    const t = text.trim();
+    const isUltrathink = /\b(ultrathink|think\s+harder|pense\s+profundamente|engenharia\s+reversa|arquitetura\s+completa|redesenhe)\b/i.test(t);
+    const isDeep = isUltrathink || /\b(megathink|think\s+hard|pense\s+passo\s+a\s+passo|analise\s+com\s+cuidado|refatore|otimize)\b/i.test(t) || t.length > 700;
+    const thinking = isUltrathink ? 'ultrathink' : (isDeep ? 'deep' : 'standard');
+
+    let projectType = 'ferramenta';
+    if (/android|kotlin|jetpack|apk|celular|mobile/i.test(t)) projectType = 'app_android';
+    else if (/jogo|game|arcade|canvas|colisão|pontuação/i.test(t)) projectType = 'jogo';
+    else if (/fastapi|flask|endpoint|rest|graphql|webhook|api/i.test(t)) projectType = 'api';
+    else if (/tkinter|pyqt|desktop|janela|gui/i.test(t)) projectType = 'desktop';
+    else if (/site|html|css|landing|web|página|frontend|dashboard/i.test(t)) projectType = 'site';
+
+    let intent = configuredMode;
+    if (configuredMode === 'auto') {
+      const hasMutation = /\b(crie|criar|implemente|adicione|edite|altere|modifique|atualize|melhore|construa|corrija|conserte|refatore)\b/i.test(t);
+      if (/\b(code\s+review|revise|revisão|audite|procure\s+bugs|vulnerabilidade)\b/i.test(t) && !/\b(corrija|aplique)\b/i.test(t)) {
+        intent = 'review';
+      } else if (/traceback|syntaxerror|typeerror|valueerror|exception|\berro\b|\bbug\b|\bfalhou\b|\bcorrija\b|\bconserte\b/i.test(t)) {
+        intent = 'debug';
+      } else if (/^(planeje|projete|estruture|desenhe\s+a\s+arquitetura|crie\s+um\s+plano|quais\s+etapas)/i.test(t)) {
+        intent = 'plan';
+      } else if ((/^(o\s+que|como\s+funciona|onde\s+fica|explique|resuma|qual\s+a)/i.test(t) || t.endsWith('?')) && !hasMutation) {
+        intent = 'plan';
+      } else {
+        intent = 'code';
+      }
+    }
+
+    const effectiveModel = (isUltrathink && ALLOWED_MODELS.has('gemini-4-argon')) ? 'gemini-4-argon' : selectedModel;
+    const maxOutputTokens = isUltrathink ? 8192 : (isDeep ? 6144 : 4096);
+    const temperature = isUltrathink ? 0.15 : (isDeep ? 0.2 : 0.25);
+
+    const prompts = {
+      code: `Você é o RARNESS, agente autônomo de engenharia de software estilo Claude Code. Tipo de projeto detectado: ${projectType}. Nível cognitivo: ${thinking}. Estruture a solução com checklist clara, código modular completo, seguro e testável.`,
+      plan: `Você está no Modo Planejamento & Arquitetura (/plan) do RARNESS (somente leitura/design). Tipo de projeto detectado: ${projectType}. Decomponha o pedido em requisitos, árvore de arquivos, ordem topológica de tarefas e critérios de aceitação verificáveis.`,
+      debug: `Você está no Modo Debug & Reparo Cirúrgico do RARNESS. Isole a causa-raiz do erro/stacktrace, proponha a correção mínima exata sem introduzir regressões e mostre como validar com testes.`,
+      review: `Você está no Modo Code Review & Auditoria (/review) do RARNESS. Analise o código procurando bugs lógicos, falhas de segurança, casos de borda e oportunidades de melhoria.`
+    };
+    const sysInstruction = (prompts[intent] || prompts.code) + ' Regra absoluta: utilize exclusivamente os modelos gemini-3.8-flash e gemini-4-argon; nunca use ou mencione modelos antigos como Gemini 1.x, 2.0 ou 2.5.';
+    return { intent, thinking, projectType, effectiveModel, maxOutputTokens, temperature, sysInstruction };
+  }
+
+  prompt.addEventListener('input', () => {
+    const text = prompt.value.trim();
+    if (!text) { inferencePreview.textContent = 'Inferência de modo ativa'; return; }
+    const p = inferIntentAndMode(text, agentMode.value, model.value);
+    inferencePreview.textContent = `Modo: ${p.intent.toUpperCase()} · ${p.thinking} · tipo: ${p.projectType}`;
+  });
+
   let openSettings = () => document.querySelector('#settingsPanel').classList.add('open');
-  function bubble(role, content) {
+  function bubble(role, content, metaText = '') {
     document.querySelector('#welcome')?.remove();
     const node = document.createElement('article'); node.className = 'bubble ' + role;
-    const label = document.createElement('div'); label.className = 'label'; label.textContent = role === 'user' ? 'Você' : 'RARNESS';
+    const label = document.createElement('div'); label.className = 'label';
+    const who = document.createElement('span'); who.textContent = role === 'user' ? 'Você' : 'RARNESS';
+    label.append(who);
+    if (metaText) {
+      const badge = document.createElement('span'); badge.className = 'badge'; badge.textContent = metaText;
+      label.append(badge);
+    }
     const body = document.createElement('div'); body.textContent = content;
     node.append(label, body); messages.append(node); node.scrollIntoView({behavior:'smooth',block:'end'}); return body;
   }
@@ -97,28 +153,35 @@
     const content = prompt.value.trim(), key = apiKey.value.trim(), selectedModel = model.value;
     if (!content || send.disabled) return;
     if (!key) { openSettings(); status.textContent='Adicione sua chave nas configurações'; return; }
-    if (!ALLOWED_MODELS.has(selectedModel)) { status.textContent='Modelo antigo bloqueado'; return; }
+    if (FORBIDDEN_LEGACY.test(selectedModel) || !ALLOWED_MODELS.has(selectedModel)) {
+      status.textContent='Modelo antigo bloqueado; use 3.8 Flash ou 4 Argon'; return;
+    }
+    const profile = inferIntentAndMode(content, agentMode.value, selectedModel);
+    const activeModel = profile.effectiveModel;
+
     history.push({role:'user',content});
     if (history.length > 40) history.splice(0, history.length - 40);
     while (history[0]?.role === 'assistant') history.shift();
-    bubble('user',content); prompt.value=''; send.disabled=true; status.textContent='Consultando Gemini…';
-    const output = bubble('assistant','Conectando diretamente à API…');
+    bubble('user', content, `${profile.intent} · ${profile.thinking}`);
+    prompt.value=''; inferencePreview.textContent='Inferência de modo ativa';
+    send.disabled=true; status.textContent=`Consultando ${activeModel} (${profile.intent})…`;
+    const output = bubble('assistant','Conectando diretamente à API…', activeModel);
     try {
       const contents = history.map(item => ({role:item.role === 'assistant' ? 'model' : 'user',parts:[{text:item.content}]}));
-      const sysText = MODE_INSTRUCTIONS[agentMode.value] || MODE_INSTRUCTIONS.code;
-      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(selectedModel) + ':generateContent', {
+      const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(activeModel) + ':generateContent', {
         method:'POST', headers:{'Content-Type':'application/json','x-goog-api-key':key},
         body:JSON.stringify({
-          systemInstruction:{parts:[{text:sysText}]},
+          systemInstruction:{parts:[{text:profile.sysInstruction}]},
           contents,
-          generationConfig:{temperature:0.3,maxOutputTokens:1800}
+          generationConfig:{temperature:profile.temperature,maxOutputTokens:profile.maxOutputTokens}
         })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error?.message || 'A API do Gemini recusou a solicitação. Confira a chave, o modelo e os limites da API.');
       const answer = (data.candidates?.[0]?.content?.parts || []).map(part => part.text || '').join('').trim();
       if (!answer) throw new Error('A API respondeu sem texto. Tente novamente.');
-      output.textContent=answer; history.push({role:'assistant',content:answer}); status.textContent='Conectado · '+selectedModel;
+      output.textContent=answer; history.push({role:'assistant',content:answer});
+      status.textContent=`Conectado · ${activeModel} (${profile.intent})`;
     } catch (error) {
       output.textContent='Erro: '+error.message; output.classList.add('error'); history.pop(); status.textContent='Falha na API';
     } finally {send.disabled=false;prompt.focus();}

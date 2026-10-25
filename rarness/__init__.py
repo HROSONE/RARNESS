@@ -1,14 +1,25 @@
-"""Núcleo do RARNESS: planejamento, inteligência de código, memória, arquivos, execução, correção, Git e estado do projeto."""
+"""Núcleo do RARNESS: inferência de intenção/modo, inteligência de código AST, sessão Read-Before-Edit, memória, execução, reparo e estado."""
 
 from rarness.code_intel import (
     apply_multi_edit,
     apply_surgical_edit,
     build_repo_map,
+    find_symbol,
     format_numbered_lines,
+    patch_lines,
     search_codebase,
     unified_diff_preview,
+    verify_syntax,
 )
 from rarness.git_ops import git_diff_summary, git_status_summary, restore_latest_backup
+from rarness.intent_router import (
+    IntentProfile,
+    build_stacktrace_context,
+    detect_thinking_level,
+    extract_stacktrace_targets,
+    infer_intent_and_mode,
+    infer_project_type,
+)
 from rarness.memory import (
     TodoItem,
     append_memory_note,
@@ -20,24 +31,49 @@ from rarness.memory import (
     load_todos,
     save_todos,
 )
+from rarness.session import (
+    SessionTracker,
+    is_safe_readonly_bash,
+    list_sessions,
+    load_session,
+    run_hook,
+    safe_web_fetch,
+    save_session,
+)
 
 __all__ = [
+    "IntentProfile",
+    "SessionTracker",
     "TodoItem",
     "append_memory_note",
     "apply_multi_edit",
     "apply_surgical_edit",
     "build_repo_map",
+    "build_stacktrace_context",
     "compact_history",
+    "detect_thinking_level",
     "expand_at_mentions",
+    "extract_stacktrace_targets",
+    "find_symbol",
     "format_numbered_lines",
     "format_todos",
     "generate_claude_md",
     "git_diff_summary",
     "git_status_summary",
+    "infer_intent_and_mode",
+    "infer_project_type",
+    "is_safe_readonly_bash",
+    "list_sessions",
     "load_claude_memories",
+    "load_session",
     "load_todos",
+    "patch_lines",
     "restore_latest_backup",
+    "run_hook",
+    "safe_web_fetch",
+    "save_session",
     "save_todos",
     "search_codebase",
     "unified_diff_preview",
+    "verify_syntax",
 ]
