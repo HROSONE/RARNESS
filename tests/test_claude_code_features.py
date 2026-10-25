@@ -515,5 +515,24 @@ class ToolExecutionModesAndSessionGuardsTests(unittest.TestCase):
                 opencode.validate_model_name(bad_model, "gemini")
 
 
+
+    def test_free_coding_providers_and_catalog_are_supported(self):
+        self.assertIn("groq", opencode.FREE_CODING_CATALOG)
+        self.assertIn("cerebras", opencode.FREE_CODING_CATALOG)
+        self.assertIn("openrouter", opencode.FREE_CODING_CATALOG)
+        self.assertIn("openai/gpt-oss-120b", opencode.FREE_CODING_CATALOG["groq"])
+        self.assertIn("gpt-oss-120b", opencode.FREE_CODING_CATALOG["cerebras"])
+        self.assertIn("cohere/north-mini-code:free", opencode.FREE_CODING_CATALOG["openrouter"])
+
+        for prov, mod in [
+            ("groq", "openai/gpt-oss-120b"),
+            ("groq", "qwen/qwen3.8-27b"),
+            ("cerebras", "gpt-oss-120b"),
+            ("openrouter", "cohere/north-mini-code:free"),
+            ("openrouter", "poolside/laguna-s-2.1:free"),
+        ]:
+            self.assertEqual(opencode.validate_model_name(mod, prov), mod)
+
+
 if __name__ == "__main__":
     unittest.main()

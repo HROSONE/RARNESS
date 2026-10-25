@@ -229,6 +229,19 @@ DESTRUCTIVE_COMMAND = re.compile(
 ALLOWED_GEMINI_MODELS = ("gemini-3.8-flash", "gemini-4-argon")
 FORBIDDEN_LEGACY_GEMINI = re.compile(r"^gemini-[12](?:\.|-|$)", re.IGNORECASE)
 
+FREE_CODING_CATALOG: dict[str, tuple[str, ...]] = {
+    "gemini": ("gemini-3.8-flash", "gemini-4-argon"),
+    "groq": ("openai/gpt-oss-120b", "qwen/qwen3.8-27b", "llama-3.3-70b-versatile"),
+    "cerebras": ("gpt-oss-120b", "qwen-3.8-27b"),
+    "openrouter": (
+        "cohere/north-mini-code:free",
+        "poolside/laguna-s-2.1:free",
+        "qwen/qwen3.8-27b:free",
+        "thinkingmachines/inkling:free",
+        "openrouter/free",
+    ),
+}
+
 # Mapeamento de nomes canônicos do Claude Code para nomes internos do RARNESS
 CANONICAL_TOOL_ALIASES = {
     "Read": "read_file",
@@ -284,11 +297,26 @@ def provider_config() -> tuple[str, str, str]:
             os.getenv("GEMINI_API_KEY", "").strip(),
             validate_model_name(raw_model, provider="gemini"),
         )
+    if provider == "groq":
+        raw_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip() or "openai/gpt-oss-120b"
+        return (
+            provider,
+            os.getenv("GROQ_API_KEY", "").strip(),
+            validate_model_name(raw_model, provider="groq"),
+        )
+    if provider == "cerebras":
+        raw_model = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b").strip() or "gpt-oss-120b"
+        return (
+            provider,
+            os.getenv("CEREBRAS_API_KEY", "").strip(),
+            validate_model_name(raw_model, provider="cerebras"),
+        )
     if provider == "openrouter":
+        raw_model = os.getenv("OPENROUTER_MODEL", "cohere/north-mini-code:free").strip() or "cohere/north-mini-code:free"
         return (
             provider,
             os.getenv("OPENROUTER_API_KEY", "").strip(),
-            os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free").strip(),
+            validate_model_name(raw_model, provider="openrouter"),
         )
     if provider == "anthropic":
         return (
@@ -302,12 +330,14 @@ def provider_config() -> tuple[str, str, str]:
             os.getenv("OPENAI_API_KEY", "").strip(),
             os.getenv("OPENAI_MODEL", "gpt-4.1").strip(),
         )
-    raise ValueError("AI_PROVIDER precisa ser 'gemini', 'anthropic', 'openai' ou 'openrouter'.")
+    raise ValueError("AI_PROVIDER precisa ser 'gemini', 'groq', 'cerebras', 'openrouter', 'anthropic' ou 'openai'.")
 
 
 def make_client(provider: str, api_key: str) -> OpenAI:
     urls = {
         "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "groq": "https://api.groq.com/openai/v1",
+        "cerebras": "https://api.cerebras.ai/v1",
         "openrouter": "https://openrouter.ai/api/v1",
         "anthropic": "https://api.anthropic.com/v1/",
         "openai": "https://api.openai.com/v1",

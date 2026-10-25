@@ -1,4 +1,4 @@
-"""Vercel ASGI entrypoint for the RARNESS web chat with automatic Claude Code-style intent & mode inference."""
+"""Vercel ASGI entrypoint for the RARNESS web chat with multi-provider support (Gemini, Groq, Cerebras, OpenRouter)."""
 from __future__ import annotations
 
 import hmac
@@ -26,33 +26,42 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: list[Message] = Field(min_length=1, max_length=20)
     model: str | None = None
+    provider: str | None = None
     mode: str | None = "auto"
 
 
-def get_client() -> tuple[OpenAI, str]:
-    provider = os.getenv("AI_PROVIDER", "gemini").strip().lower()
+def get_client(requested_provider: str | None = None) -> tuple[OpenAI, str, str]:
+    provider = (requested_provider or os.getenv("AI_PROVIDER", "gemini")).strip().lower()
     if provider == "gemini":
         key = os.getenv("GEMINI_API_KEY", "").strip()
         base_url = "https://generativelanguage.googleapis.com/v1beta/openai/"
         model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash"
         if FORBIDDEN_LEGACY_GEMINI.match(model) or model not in ALLOWED_GEMINI_MODELS:
             model = "gemini-3.8-flash"
+    elif provider == "groq":
+        key = os.getenv("GROQ_API_KEY", "").strip()
+        base_url = "https://api.groq.com/openai/v1"
+        model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b").strip() or "openai/gpt-oss-120b"
+    elif provider == "cerebras":
+        key = os.getenv("CEREBRAS_API_KEY", "").strip()
+        base_url = "https://api.cerebras.ai/v1"
+        model = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b").strip() or "gpt-oss-120b"
     elif provider == "openrouter":
         key = os.getenv("OPENROUTER_API_KEY", "").strip()
         base_url = "https://openrouter.ai/api/v1"
-        model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free").strip()
+        model = os.getenv("OPENROUTER_MODEL", "cohere/north-mini-code:free").strip() or "cohere/north-mini-code:free"
     else:
-        raise HTTPException(status_code=500, detail="AI_PROVIDER deve ser gemini ou openrouter.")
+        raise HTTPException(status_code=500, detail="AI_PROVIDER deve ser gemini, groq, cerebras ou openrouter.")
 
     if not key:
         raise HTTPException(status_code=503, detail=f"Configure a chave de API do provedor {provider} na Vercel.")
 
-    return OpenAI(api_key=key, base_url=base_url, timeout=45.0, max_retries=1), model
+    return OpenAI(api_key=key, base_url=base_url, timeout=45.0, max_retries=1), model, provider
 
 
 @app.get("/")
 def health():
-    return {"name": "RARNESS", "status": "online", "mode": "web-chat-claude-code-engine"}
+    return {"name": "RARNESS", "status": "online", "mode": "web-chat-multi-provider"}
 
 
 @app.post("/chat")
@@ -66,12 +75,14 @@ def chat(body: ChatRequest, x_rarness_token: str | None = Header(default=None)):
     if not x_rarness_token or not hmac.compare_digest(x_rarness_token, expected):
         raise HTTPException(status_code=401, detail="Token de acesso inválido.")
 
-    client, model = get_client()
-    if os.getenv("AI_PROVIDER", "gemini").strip().lower() == "gemini" and body.model:
-        if FORBIDDEN_LEGACY_GEMINI.match(body.model) or body.model not in ALLOWED_GEMINI_MODELS:
+    client, model, provider = get_client(body.provider)
+    if body.model:
+        if FORBIDDEN_LEGACY_GEMINI.match(body.model):
+            raise HTTPException(status_code=400, detail="Modelos Gemini antigos (1.x/2.0/2.5) são bloqueados.")
+        if provider == "gemini" and body.model not in ALLOWED_GEMINI_MODELS:
             raise HTTPException(
                 status_code=400,
-                detail="Modelo Gemini não permitido. Use apenas gemini-3.8-flash ou gemini-4-argon (modelos antigos 2.0/2.5 são bloqueados).",
+                detail="Modelo Gemini não permitido. Use apenas gemini-3.8-flash ou gemini-4-argon.",
             )
         model = body.model
 
@@ -80,9 +91,9 @@ def chat(body: ChatRequest, x_rarness_token: str | None = Header(default=None)):
         last_user_msg,
         configured_mode=body.mode or "auto",
         current_model=model,
-        auto_route_model=(body.model is None),
+        auto_route_model=(body.model is None and provider == "gemini"),
     )
-    if os.getenv("AI_PROVIDER", "gemini").strip().lower() == "gemini" and body.model is None:
+    if provider == "gemini" and body.model is None:
         model = profile.recommended_model
 
     sys_prompt = (
@@ -90,8 +101,7 @@ def chat(body: ChatRequest, x_rarness_token: str | None = Header(default=None)):
         f"Intenção inferida: {profile.intent} | Modo efetivo: {profile.effective_mode} | "
         f"Nível de raciocínio: {profile.thinking_level} | Tipo de projeto: {profile.inferred_project_type}. "
         f"{profile.reasoning_directive} "
-        "Regra estrita: nunca use nem sugira modelos antigos como Gemini 1.x, 2.0 ou 2.5; utilize exclusivamente "
-        "gemini-3.8-flash e gemini-4-argon."
+        "Regra estrita: nunca use nem sugira modelos antigos como Gemini 1.x, 2.0 ou 2.5."
     )
 
     try:
@@ -107,6 +117,7 @@ def chat(body: ChatRequest, x_rarness_token: str | None = Header(default=None)):
         answer = response.choices[0].message.content or ""
         return {
             "answer": answer,
+            "provider": provider,
             "model": model,
             "inferred_intent": profile.intent,
             "effective_mode": profile.effective_mode,
