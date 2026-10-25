@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101114">
-  <title>RARNESS — Assistente de Engenharia</title>
+  <title>RARNESS — Assistente</title>
   <style>
     :root{color-scheme:dark;--bg:#101114;--panel:#191a20;--line:#2c2e37;--text:#f2f2f5;--muted:#a1a4b1;--accent:#b9f27c;--danger:#ff9b9b}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh;display:flex;flex-direction:column}
@@ -31,7 +31,7 @@
   <section id="messages" aria-live="polite">
     <div class="welcome" id="welcome">
       <h1>Vamos construir algo.</h1>
-      <p>Converse com o RARNESS diretamente pela API do Gemini, sem servidor intermediário. Para edição de arquivos, busca AST, subagentes e diff no terminal, use o CLI <code>python opencode.py</code>.</p>
+      <p>Converse com o RARNESS diretamente pela API do Gemini, sem servidor intermediário.</p>
     </div>
   </section>
   <form class="composer" id="form">
@@ -46,38 +46,38 @@
       <span>Enter envia · Shift+Enter quebra linha</span>
     </div>
     <div class="inputrow">
-      <textarea id="prompt" placeholder="Descreva o que você quer arquitetar, revisar ou criar..." aria-label="Mensagem" rows="1" required></textarea>
+      <textarea id="prompt" placeholder="Descreva o que você quer criar..." aria-label="Mensagem" rows="1" required></textarea>
       <button class="send" id="send" type="submit">Enviar ↗</button>
     </div>
   </form>
 </main>
-<footer>RARNESS — Claude Code Edition</footer>
+<footer>RARNESS</footer>
 <div class="settings-panel" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
   <section class="settings-card">
     <div class="settings-head"><strong id="settingsTitle">Configurações</strong><button class="iconbtn" id="closeSettings" type="button" aria-label="Fechar configurações">×</button></div>
     <label class="setting-field">Chave da API do Gemini<input id="apiKey" type="password" autocomplete="off" placeholder="Cole sua chave da API" /></label>
     <label class="setting-field">Modelo
       <select id="model">
-        <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash — rápido e preciso</option>
-        <option value="gemini-2.5-pro">Gemini 2.5 Pro — raciocínio avançado de código</option>
-        <option value="gemini-2.0-flash">Gemini 2.0 Flash — leve</option>
+        <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash — rápido</option>
+        <option value="gemini-4-argon">Gemini 4 Argon — raciocínio avançado</option>
       </select>
     </label>
-    <p class="hint">A chave é mantida apenas na memória desta aba para chamar diretamente a API do Google. Não compartilhe sua chave.</p>
+    <p class="hint">A chave é usada para chamar diretamente a API do Google. Não compartilhe sua chave. Descreva o que deseja no prompt; o RARNESS deve identificar o tipo de projeto automaticamente.</p>
     <div class="setting-actions"><button class="secondary" id="cancelSettings" type="button">Fechar</button><button class="send" id="saveSettings" type="button">Aplicar</button></div>
   </section>
 </div>
 <script>
 (() => {
+  const ALLOWED_MODELS = new Set(['gemini-3.8-flash', 'gemini-4-argon']);
   const form = document.querySelector('#form'), prompt = document.querySelector('#prompt');
   const apiKey = document.querySelector('#apiKey'), model = document.querySelector('#model'), messages = document.querySelector('#messages');
   const agentMode = document.querySelector('#agentMode'), clearChat = document.querySelector('#clearChat');
   const send = document.querySelector('#send'), status = document.querySelector('#status');
   const history = [];
   const MODE_INSTRUCTIONS = {
-    code: 'Você é o RARNESS, agente sênior de engenharia de software estilo Claude Code. Responda em português brasileiro com código limpo, modular, seguro e testável.',
-    plan: 'Você está no Modo Planejamento (/plan) do RARNESS. Analise os requisitos, proponha a arquitetura de arquivos, dependências, tarefas em ordem topológica e critérios de aceitação antes de escrever código.',
-    review: 'Você está no Modo Code Review (/review) do RARNESS. Examine o código ou diff enviado procurando bugs, falhas de segurança, casos de borda e melhorias de legibilidade.'
+    code: 'Você é o RARNESS, agente sênior de engenharia de software estilo Claude Code. Responda em português brasileiro. Regra estrita: nunca use ou sugira modelos antigos como Gemini 1.x, 2.0 ou 2.5; utilize exclusivamente gemini-3.8-flash e gemini-4-argon.',
+    plan: 'Você está no Modo Planejamento (/plan) do RARNESS. Analise os requisitos, proponha a arquitetura de arquivos, dependências e critérios de aceitação antes de escrever código. Nunca use modelos antigos como Gemini 2.0 ou 2.5.',
+    review: 'Você está no Modo Code Review (/review) do RARNESS. Examine o código ou diff enviado procurando bugs, falhas de segurança e melhorias.'
   };
   let openSettings = () => document.querySelector('#settingsPanel').classList.add('open');
   function bubble(role, content) {
@@ -89,14 +89,15 @@
   }
   clearChat.addEventListener('click', () => {
     history.length = 0;
-    messages.innerHTML = '<div class="welcome" id="welcome"><h1>Contexto limpo.</h1><p>Comece uma nova tarefa com o RARNESS.</p></div>';
-    status.textContent = 'Contexto limpo';
+    messages.innerHTML = '<div class="welcome" id="welcome"><h1>Vamos construir algo.</h1><p>Converse com o RARNESS diretamente pela API do Gemini, sem servidor intermediário.</p></div>';
+    status.textContent = 'Pronto';
   });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const content = prompt.value.trim(), key = apiKey.value.trim(), selectedModel = model.value;
     if (!content || send.disabled) return;
     if (!key) { openSettings(); status.textContent='Adicione sua chave nas configurações'; return; }
+    if (!ALLOWED_MODELS.has(selectedModel)) { status.textContent='Modelo antigo bloqueado'; return; }
     history.push({role:'user',content});
     if (history.length > 40) history.splice(0, history.length - 40);
     while (history[0]?.role === 'assistant') history.shift();
@@ -110,7 +111,7 @@
         body:JSON.stringify({
           systemInstruction:{parts:[{text:sysText}]},
           contents,
-          generationConfig:{temperature:0.25,maxOutputTokens:4096}
+          generationConfig:{temperature:0.3,maxOutputTokens:1800}
         })
       });
       const data = await response.json();

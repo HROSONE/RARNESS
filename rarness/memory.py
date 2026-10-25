@@ -98,7 +98,7 @@ def generate_claude_md(root: Path) -> str:
         "## Comandos de Verificação e Testes\n"
         f"{test_str}\n\n"
         "## Diretrizes de Engenharia\n"
-        "- Responda em português brasileiro, salvo pedido em contrário.\n"
+        "- Responda em português brasileiro, salvo pedido em contrário.\n- Modelos Gemini permitidos: use exclusivamente `gemini-3.8-flash` e `gemini-4-argon` (nunca use modelos antigos como 1.x, 2.0 ou 2.5).\n"
         "- Inspecione os arquivos (`read_file` / `search_text` / `repo_map`) antes de editá-los.\n"
         "- Prefira edições cirúrgicas pequenas (`edit_file` / `multi_edit`) e explique o que mudou.\n"
         "- Execute os testes relevantes após modificar código.\n"

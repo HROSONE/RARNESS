@@ -264,5 +264,14 @@ class ToolExecutionAndModesTests(unittest.TestCase):
         self.assertIn("def iniciar()", res)
 
 
+
+    def test_legacy_gemini_models_are_strictly_blocked(self):
+        for ok_model in ("gemini-3.8-flash", "gemini-4-argon"):
+            self.assertEqual(opencode.validate_model_name(ok_model, "gemini"), ok_model)
+        for bad_model in ("gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-2"):
+            with self.subTest(bad_model=bad_model), self.assertRaises(ValueError):
+                opencode.validate_model_name(bad_model, "gemini")
+
+
 if __name__ == "__main__":
     unittest.main()
